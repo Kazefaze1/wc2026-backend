@@ -5,7 +5,6 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Match index in your bracket → team names to look for in ESPN data
 const MATCHES = {
   "0-0": ["Germany", "Paraguay"],
   "0-1": ["France", "Sweden"],
@@ -27,68 +26,41 @@ const MATCHES = {
 
 let results = {};
 
-// Fetch scores from ESPN
 async function fetchScores() {
   try {
     const today = new Date();
-    const yest = new Date(today.getTime() - 86400000);
     const fmt = (d) => `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
-    
-    const dates = [fmt(today), fmt(yest)];
+    // Pull the whole tournament window so finished games stay available
+    const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?limit=200&dates=20260611-20260719`);
+    const data = await r.json();
     const allEvents = [];
-    
-    for (const dt of dates) {
-      const r = await fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates=${dt}`);
-      const data = await r.json();
-      (data.events || []).forEach(ev => {
-        const comp = ev.competitions[0];
-        const cs = comp.competitors;
-        if (cs.length < 2) return;
-        allEvents.push({
-          t1: cs[0].team.displayName,
-          s1: Number(cs[0].score),
-          t2: cs[1].team.displayName,
-          s2: Number(cs[1].score),
-          state: comp.status.type.state,
-          completed: comp.status.type.completed,
-          clock: comp.status.displayClock || '',
-        });
+    (data.events || []).forEach(ev => {
+      const comp = ev.competitions[0];
+      const cs = comp.competitors;
+      if (cs.length < 2) return;
+      allEvents.push({
+        t1: cs[0].team.displayName,
+        s1: Number(cs[0].score),
+        p1: cs[0].shootoutScore != null ? Number(cs[0].shootoutScore) : null,
+        t2: cs[1].team.displayName,
+        s2: Number(cs[1].score),
+        p2: cs[1].shootoutScore != null ? Number(cs[1].shootoutScore) : null,
+        state: comp.status.type.state,
+        completed: comp.status.type.completed,
+        clock: comp.status.displayClock || '',
       });
-    }
-    
-    // Match against our bracket
+    });
+
     const newResults = {};
     Object.entries(MATCHES).forEach(([key, [teamA, teamB]]) => {
       const match = allEvents.find(ev => {
-        const t1 = ev.t1.toLowerCase();
-        const t2 = ev.t2.toLowerCase();
-        const a = teamA.toLowerCase();
-        const b = teamB.toLowerCase();
+        const t1 = ev.t1.toLowerCase(), t2 = ev.t2.toLowerCase();
+        const a = teamA.toLowerCase(), b = teamB.toLowerCase();
         return (t1.includes(a) && t2.includes(b)) || (t1.includes(b) && t2.includes(a));
       });
       if (!match) return;
       const aIsT1 = match.t1.toLowerCase().includes(teamA.toLowerCase());
-      newResults[key] = {
-        a: aIsT1 ? match.s1 : match.s2,
-        b: aIsT1 ? match.s2 : match.s1,
-        status: match.completed ? 'finished' : match.state === 'in' ? 'live' : 'upcoming',
-      };
-    });
-    
-    results = newResults;
-    console.log(`Updated ${Object.keys(newResults).length} matches at ${new Date().toISOString()}`);
-  } catch (err) {
-    console.error('Fetch failed:', err.message);
-  }
-}
-
-// Fetch every 2 minutes
-fetchScores();
-setInterval(fetchScores, 2 * 60 * 1000);
-
-app.get('/api/results', (req, res) => {
-  res.json(results);
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+      const aGoals = aIsT1 ? match.s1 : match.s2;
+      const bGoals = aIsT1 ? match.s2 : match.s1;
+      const aPens = aIsT1 ? match.p1 : match.p2;
+      const bPens = aIsT1 ? match.p2 : match.p1;
