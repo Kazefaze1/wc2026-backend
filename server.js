@@ -25,6 +25,7 @@ const MATCHES = {
 };
 
 let results = {};
+let scorers = [];
 
 async function fetchScores() {
   try {
@@ -80,15 +81,73 @@ async function fetchScores() {
     results = newResults;
     console.log("Updated " + Object.keys(newResults).length + " matches at " + new Date().toISOString());
   } catch (err) {
-    console.error("Fetch failed:", err.message);
+    console.error("Fetch scores failed:", err.message);
+  }
+}
+
+// ---- Top scorers (Golden Boot) ----
+async function fetchScorers() {
+  try {
+    // The leaders endpoint returns categories; we want the goals category.
+    const leadersUrl = "https://sports.core.api.espn.com/v2/sports/soccer/leagues/fifa.world/seasons/2026/types/3/leaders?limit=50";
+    let r = await fetch(leadersUrl);
+    let data = await r.json();
+
+    // Find the goals category (try common names)
+    let cat = null;
+    if (data && Array.isArray(data.categories)) {
+      cat = data.categories.find(function (c) {
+        const n = (c.name || "").toLowerCase();
+        const dn = (c.displayName || "").toLowerCase();
+        return n.indexOf("goal") !== -1 || dn.indexOf("goal") !== -1;
+      }) || data.categories[0];
+    }
+    if (!cat || !Array.isArray(cat.leaders)) {
+      console.log("Scorers: no goals category found");
+      return;
+    }
+
+    // Each leader has a value (goals) and an athlete $ref we must fetch for the name/photo
+    const top = cat.leaders.slice(0, 5);
+    const resolved = [];
+    for (let i = 0; i < top.length; i++) {
+      const ld = top[i];
+      const goals = Number(ld.value);
+      let name = "", country = "", photo = "", athleteId = "";
+      try {
+        if (ld.athlete && ld.athlete.$ref) {
+          const ar = await fetch(ld.athlete.$ref);
+          const ad = await ar.json();
+          name = ad.displayName || ad.fullName || ad.name || "";
+          athleteId = ad.id || "";
+          photo = (ad.headshot && ad.headshot.href) ? ad.headshot.href
+                  : (athleteId ? "https://a.espncdn.com/i/headshots/soccer/players/full/" + athleteId + ".png" : "");
+          // country: try team ref
+          if (ad.team && ad.team.$ref) {
+            try { const tr = await fetch(ad.team.$ref); const td = await tr.json(); country = td.displayName || td.name || ""; } catch (e) {}
+          }
+        }
+      } catch (e) {}
+      resolved.push({ rank: i + 1, name: name, country: country, goals: goals, photo: photo });
+    }
+    scorers = resolved;
+    console.log("Updated " + resolved.length + " scorers");
+  } catch (err) {
+    console.error("Fetch scorers failed:", err.message);
   }
 }
 
 fetchScores();
+fetchScorers();
 setInterval(fetchScores, 2 * 60 * 1000);
+setInterval(fetchScorers, 5 * 60 * 1000);
 
 app.get('/api/results', function (req, res) {
   res.json(results);
+});
+
+app.get('/api/scorers', function (req, res) {
+  res.json(scorers);
 });
 
 const PORT = process.env.PORT || 3000;
