@@ -25,7 +25,6 @@ const MATCHES = {
 };
 
 let results = {};
-let scorers = [];
 
 async function fetchScores() {
   try {
@@ -85,98 +84,11 @@ async function fetchScores() {
   }
 }
 
-// ---- Top scorers (Golden Boot) — aggregated from per-game leaders ----
-async function fetchScorers() {
-  try {
-    // The CDN scoreboard bundles per-game "leaders" with goal scorers.
-    const url = "https://cdn.espn.com/core/soccer/scoreboard?xhr=1&league=fifa.world&limit=300&dates=20260611-20260719";
-    const r = await fetch(url);
-    const data = await r.json();
-
-    // The CDN nests events; try the known paths defensively.
-    let events = [];
-    if (data && data.content && data.content.sbData && Array.isArray(data.content.sbData.events)) {
-      events = data.content.sbData.events;
-    } else if (data && data.content && Array.isArray(data.content.events)) {
-      events = data.content.events;
-    } else if (data && Array.isArray(data.events)) {
-      events = data.events;
-    } else if (data && data.scoreboard && Array.isArray(data.scoreboard.events)) {
-      events = data.scoreboard.events;
-    }
-    console.log("Scorers: scanning " + events.length + " events");
-
-    // Aggregate goals per player id across all games
-    const tally = {}; // id -> { name, goals, team, jersey }
-    events.forEach(function (ev) {
-      const comps = ev.competitions || [];
-      comps.forEach(function (comp) {
-        const competitors = comp.competitors || [];
-        competitors.forEach(function (c) {
-          const teamName = (c.team && (c.team.displayName || c.team.name)) || "";
-          const leaders = c.leaders || [];
-          leaders.forEach(function (cat) {
-            const catName = (cat.name || "").toLowerCase();
-            if (catName !== "goals") return;
-            (cat.leaders || []).forEach(function (entry) {
-              const ath = entry.athlete;
-              if (!ath) return;
-              const id = String(ath.id || "");
-              const val = Number(entry.value) || 0;
-              if (!id || val <= 0) return;
-              if (!tally[id]) {
-                tally[id] = {
-                  id: id,
-                  name: ath.fullName || ath.displayName || ath.shortName || "",
-                  goals: 0,
-                  team: teamName,
-                  jersey: ath.jersey || ""
-                };
-              }
-              // value is this player's goals IN THIS GAME; sum across games
-              tally[id].goals += val;
-              if (!tally[id].team && teamName) tally[id].team = teamName;
-            });
-          });
-        });
-      });
-    });
-
-    // Sort by goals desc, take top 5
-    const arr = Object.keys(tally).map(function (k) { return tally[k]; });
-    arr.sort(function (a, b) { return b.goals - a.goals; });
-    const top = arr.slice(0, 5).map(function (p, i) {
-      return {
-        rank: i + 1,
-        name: p.name,
-        country: p.team,
-        goals: p.goals,
-        photo: "https://a.espncdn.com/i/headshots/soccer/players/full/" + p.id + ".png"
-      };
-    });
-
-    if (top.length) {
-      scorers = top;
-      console.log("Updated " + top.length + " scorers (top: " + top[0].name + " " + top[0].goals + ")");
-    } else {
-      console.log("Scorers: no goal data found in events");
-    }
-  } catch (err) {
-    console.error("Fetch scorers failed:", err.message);
-  }
-}
-
 fetchScores();
-fetchScorers();
 setInterval(fetchScores, 2 * 60 * 1000);
-setInterval(fetchScorers, 5 * 60 * 1000);
 
 app.get('/api/results', function (req, res) {
   res.json(results);
-});
-
-app.get('/api/scorers', function (req, res) {
-  res.json(scorers);
 });
 
 const PORT = process.env.PORT || 3000;
